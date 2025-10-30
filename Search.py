@@ -57,32 +57,6 @@ def deanonymize_user(known_friends, graph):
     return best_match, max_similarity
 
 
-def evaluate_deanonymization(graph, num_tests=100, num_known_friends=5):
-    # Оценивает эффективность деанонимизации
-    successes = 0
-
-    for _ in range(num_tests):
-        # Выбираем случайного пользователя как "жертву"
-        target_node = random.choice(list(graph.nodes()))
-
-        # Берем его друзей как "вспомогательные данные"
-        friends = list(graph.neighbors(target_node))
-
-        # Симулируем знание только части друзей
-        known_friends = random.sample(friends, min(num_known_friends, len(friends))) if friends else []
-
-        # Деанонимизируем
-        match, _ = deanonymize_user(known_friends, graph)
-
-        # Проверяем успех
-        if match == target_node:
-            successes += 1
-
-    accuracy = successes / num_tests
-    print(f"Точность деанонимизации ({num_tests} тестов, {num_known_friends} друзей): {accuracy:.2%}")
-    return accuracy
-
-
 def visualize_deanonymization(graph, target_node, known_friends, match):
     # Визуализирует процесс деанонимизации
 
