@@ -1,3 +1,5 @@
+scikit-learn
+python-louvain
+numpy
 matplotlib
 networkx
-Faker~=37.12.0
