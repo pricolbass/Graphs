@@ -6,17 +6,16 @@ import numpy as np
 from collections import defaultdict, Counter
 import random
 from networkx.algorithms import community as nx_community
-from sklearn.metrics import normalized_mutual_info_score
 import time
 
 
 SEED = 0 # None
 DATA_DIR = 'facebook'
 LOW_END_PC = True
-I_WANT_SEE = False
+I_WANT_SEE = True
 
 
-def load_facebook_social_circles_data(DATA_DIR, user_id=0):
+def load_facebook_social_circles_data(DATA_DIR, user_id):
     """
     Загружает данные Facebook Social Circles для конкретного пользователя
 
@@ -68,7 +67,7 @@ def detect_communities_with_multiple_methods(G):
         'modularity': modularity_louvain,
         'time': time.time() - start
     }
-    print(f"    Модулярность: {modularity_louvain:.4f} | Время: {results['louvain']['time']:.2f}с")
+    print(f"\tМодулярность: {modularity_louvain:.4f} | Время: {results['louvain']['time']:.2f}с")
 
 
     # 2. Girvan-Newman (только для небольших графов)
@@ -106,7 +105,7 @@ def detect_communities_with_multiple_methods(G):
         'modularity': modularity_lp,
         'time': time.time() - start
     }
-    print(f"    Модулярность: {modularity_lp:.4f} | Время: {results['label_prop']['time']:.2f}с")
+    print(f"\tМодулярность: {modularity_lp:.4f} | Время: {results['label_prop']['time']:.2f}с")
 
     # Выбираем лучший метод по модулярности
     best_method = max(results.items(), key=lambda x: x[1]['modularity'])[0]
@@ -115,60 +114,70 @@ def detect_communities_with_multiple_methods(G):
     return results, best_method
 
 
-def analyze_communities_vs_circles(G, circles, partition):
+def visualize_communities(G, partition, circles=None):
     """
-    Сравнивает обнаруженные сообщества с реальными кругами
-    Используем метрику НМИ (Normalized Mutual Information)
+    Визуализация найденных сообществ с возможностью сравнения с ground-truth
+    Мы не вычисляем NMI, а делаем возможность визуального анализа
     """
-    print("\nСРАВНЕНИЕ СООБЩЕСТВ С РЕАЛЬНЫМИ КРУГАМИ")
+    plt.figure(figsize=(16, 12))
 
-    # Подготавливаем данные для сравнения
-    node_to_circle = defaultdict(list)
-    for circle_id, (circle_name, members) in enumerate(circles.items()):
-        for node in members:
-            if node in G.nodes():
-                node_to_circle[node].append(circle_id)
+    # Цвета для сообществ
+    unique_comms = set(partition.values())
+    colors = plt.cm.tab20(range(len(unique_comms)))
+    comm_colors = {comm: colors[i] for i, comm in enumerate(unique_comms)}
 
-    # Если узел в нескольких кругах, выбираем самый большой
-    node_to_main_circle = {}
-    for node, circle_ids in node_to_circle.items():
-        if circle_ids:
-            node_to_main_circle[node] = circle_ids[0]  # Упрощение для примера
+    # Позиции узлов (фиксированные для сравнения)
+    pos = nx.spring_layout(G, seed=42) # "Эй братуха 42"
 
-    # Преобразуем partition в тот же формат
-    node_to_community = partition
+    # Рисуем узлы
+    for node in G.nodes():
+        comm_id = partition[node]
+        color = comm_colors[comm_id]
 
-    # Сравниваем только для общих узлов
-    common_nodes = set(node_to_main_circle.keys()) & set(node_to_community.keys())
+        # Если есть ground-truth круги, помечаем их границей
+        if circles:
+            in_circles = [name for name, members in circles.items() if node in members]
+            if in_circles:
+                edge_color = 'red'
+                edge_width = 2
+            else:
+                edge_color = 'gray'
+                edge_width = 1
+        else:
+            edge_color = 'gray'
+            edge_width = 1
 
-    if not common_nodes:
-        print("Нет общих узлов для сравнения")
-        return 0.0
+        nx.draw_networkx_nodes(G, pos, nodelist=[node],
+                               node_color=[color], node_size=300,
+                               edgecolors=edge_color, linewidths=edge_width)
 
-    # Создаем векторы для NMI
-    true_labels = [node_to_main_circle[node] for node in common_nodes]
-    pred_labels = [node_to_community[node] for node in common_nodes]
+    # Рисуем рёбра
+    nx.draw_networkx_edges(G, pos, alpha=0.5, edge_color='gray')
 
-    # Вычисляем NMI
-    nmi = normalized_mutual_info_score(true_labels, pred_labels)
+    # Создаем легенду для сообществ
+    legend_elements = []
+    for i, comm_id in enumerate(list(unique_comms)[:10]):  # первые 10 для легенды
+        legend_elements.append(plt.Line2D([0], [0], marker='o', color='w',
+                                          markerfacecolor=comm_colors[comm_id],
+                                          markersize=10, label=f'Сообщество {comm_id}'))
 
-    print(f"Нормализованная взаимная информация (NMI): {nmi:.4f}")
-    print("Интерпретация: 0 = нет совпадений, 1 = полное совпадение")
+    if circles:
+        legend_elements.append(plt.Line2D([0], [0], marker='o', color='w',
+                                          markerfacecolor='white', markeredgecolor='red',
+                                          markersize=10, label='В ground-truth кругах'))
 
-    # Анализируем, какие круги лучше всего обнаруживаются
-    circle_to_community = defaultdict(Counter)
-    for node in common_nodes:
-        circle_id = node_to_main_circle[node]
-        comm_id = node_to_community[node]
-        circle_to_community[circle_id][comm_id] += 1
-
-    print("\nСоответствие кругов обнаруженным сообществам:")
-    for circle_id, comm_counter in list(circle_to_community.items())[:5]:  # первые 5 для примера
-        total = sum(comm_counter.values())
-        top_comm = comm_counter.most_common(1)[0]
-        print(f"Круг {circle_id}: {total} узлов, {top_comm[1] / total:.1%} в сообществе {top_comm[0]}")
-
-    return nmi
+    plt.legend(handles=legend_elements, bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.title("Найденные сообщества")
+    plt.axis('off')
+    plt.tight_layout()
+    print("ВИЗУАЛИЗАЦИЯ СООБЩЕСТВ")
+    try:
+        plt.savefig("communities_visualization.png", dpi=300, bbox_inches='tight')
+        print("Сохранение успешно!")
+    except Exception as e:
+        print(f"Что-то пошло не так... {e}")
+    if I_WANT_SEE:
+        plt.show()
 
 
 def create_anonymous_graph(G):
@@ -180,64 +189,61 @@ def create_anonymous_graph(G):
 
 def select_strategic_friends(G, target_node, num_friends=5, partition=None, clustering=None):
     """
-    Стратегический выбор друзей для деанонимизации
-
-    Алгоритм выбора:
-    1. Приоритет 1: Друзья из разных сообществ (максимизируем охват)
-    2. Приоритет 2: Друзья с низкой кластеризацией (мостики между сообществами)
-    3. Приоритет 3: Друзья с высокой степенью (ключевые узлы)
+    Стратегический выбор друзей на основе структуры, найденной алгоритмом
+    Ключевой принцип: мы используем то разбиение, которое нашел алгоритм,
+    независимо от того, совпадает ли оно с ground-truth
     """
     friends = list(G.neighbors(target_node))
     if not friends or num_friends <= 0:
         return []
 
-    # Если данные о кластеризации не предоставлены, вычисляем их
+    # Если нет данных о кластеризации - вычисляем
     if partition is None:
         partition = community_louvain.best_partition(G)
     if clustering is None:
         clustering = nx.clustering(G)
 
-    # Подготовка данных для каждого друга
-    friend_data = []
-    for friend in friends:
-        # Принадлежность к сообществу
-        community_id = partition.get(friend, -1)
-
-        # Коэффициент кластеризации
-        cluster_coeff = clustering.get(friend, 0)
-
-        # Степень узла
-        degree = G.degree(friend)
-
-        friend_data.append({
-            'node': friend,
-            'community': community_id,
-            'clustering': cluster_coeff,
-            'degree': degree
-        })
-
-    # Группируем друзей по сообществам
+    # Группируем друзей по сообществам, найденным алгоритмом
     communities = defaultdict(list)
-    for data in friend_data:
-        communities[data['community']].append(data)
+    for friend in friends:
+        comm_id = partition.get(friend, -1)
+        communities[comm_id].append(friend)
 
-    # Выбираем по одному другу из разных сообществ (начиная с самых крупных)
+    # Критерий выбора внутри сообщества: низкая кластеризация + высокая степень
+    def friend_priority(friend):
+        cluster_coeff = clustering.get(friend, 0)
+        degree = G.degree(friend)
+        # Чем ниже кластеризация и выше степень, тем выше приоритет
+        return (cluster_coeff, -degree)
+
+    # Сортируем сообщества по размеру (от крупных к мелким)
+    sorted_comms = sorted(communities.items(), key=lambda x: len(x[1]), reverse=True)
+
     selected = []
-    sorted_communities = sorted(communities.items(),
-                                key=lambda x: len(x[1]), reverse=True)
+    used_communities = set()
 
-    for _, members in sorted_communities:
+    # 1. Сначала выбираем из разных сообществ
+    for comm_id, members in sorted_comms:
         if len(selected) >= num_friends:
             break
-        # Сортируем членов сообщества: приоритет друзьям с низкой кластеризацией
-        members_sorted = sorted(members, key=lambda x: (x['clustering'], -x['degree']))
-        selected.append(members_sorted[0]['node'])
 
-    # Если нужно больше друзей, добавляем оставшихся
+        # Сортируем членов по приоритету
+        members_sorted = sorted(members, key=friend_priority)
+
+        # Выбираем лучшего кандидата из сообщества
+        for candidate in members_sorted:
+            if candidate not in selected:
+                selected.append(candidate)
+                used_communities.add(comm_id)
+                break
+
+    # 2. Если не набрали достаточно - выбираем из самых информативных узлов
     if len(selected) < num_friends:
-        remaining = [data['node'] for data in friend_data if data['node'] not in selected]
-        additional = random.sample(remaining, min(num_friends - len(selected), len(remaining)))
-        selected.extend(additional)
+        remaining_friends = [f for f in friends if f not in selected]
+        # Сортируем по информативности: низкая кластеризация + высокая степень
+        remaining_sorted = sorted(remaining_friends,
+                                  key=lambda f: (clustering.get(f, 0), -G.degree(f)))
+        selected.extend(remaining_sorted[:num_friends - len(selected)])
 
     return selected[:num_friends]
 
@@ -411,6 +417,42 @@ def visualize_deanonymization_process(G, circles, target_node, strategic_friends
         plt.show()
 
 
+def analyze_community_structure(G, partition, target_node=None):
+    """
+    Визуальный анализ структуры сообществ без сравнения с ground-truth
+    Цель: понять, насколько осмысленно разбиение, которое нашел алгоритм
+    """
+    print("\n=== ВИЗУАЛЬНЫЙ АНАЛИЗ СТРУКТУРЫ СООБЩЕСТВ ===")
+    print("Анализируем: насколько осмысленно разбиение, найденное алгоритмом")
+
+    # Статистика по сообществам
+    comm_sizes = Counter(partition.values())
+    print(f"Найдено {len(comm_sizes)} сообществ")
+    print(
+        f"Размеры сообществ: min={min(comm_sizes.values())}, max={max(comm_sizes.values())}, avg={sum(comm_sizes.values()) / len(comm_sizes):.1f}")
+
+    # Анализ целевого узла (если указан)
+    if target_node and target_node in partition:
+        target_comm = partition[target_node]
+        friends = list(G.neighbors(target_node))
+
+        print(f"\nАнализ для целевого узла {target_node}:")
+        print(f"  Принадлежит к сообществу: {target_comm}")
+
+        # Распределение друзей по сообществам
+        friend_comms = Counter()
+        for friend in friends:
+            if friend in partition:
+                friend_comms[partition[friend]] += 1
+
+        print("  Распределение друзей по сообществам:")
+        for comm_id, count in friend_comms.most_common(5):
+            percent = count / len(friends) * 100 if friends else 0
+            print(f"    Сообщество {comm_id}: {count} друзей ({percent:.1f}%)")
+
+    # Визуализация
+    visualize_communities(G, partition)
+
 # Генерируем SEED, чтобы потом была возможность повторить эксперимент
 if SEED is None:
     SEED = random.randint(1, 1000)
@@ -425,7 +467,7 @@ partition = results[best_method]['partition']
 clustering = nx.clustering(G)
 
 # Шаг 4: Сравниваем сообщества с реальными кругами
-nmi = analyze_communities_vs_circles(G, circles, partition)
+nmi = visualize_communities(G, partition, circles)
 
 # Шаг 5: Выбираем случайного пользователя как "жертву"
 target_node = random.choice(list(G.nodes()))
@@ -489,4 +531,3 @@ visualize_deanonymization_process(
     strategic_friends, random_friends,
     strategic_match, random_match
 )
-
